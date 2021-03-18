@@ -1969,6 +1969,7 @@ ngx_http_grpc_filter_init(void *data)
         }
 
         u->length = 0;
+        ctx->done = 1;
 
     } else {
         u->length = 1;
@@ -4840,9 +4841,9 @@ ngx_http_grpc_ssl_conf_command_check(ngx_conf_t *cf, void *post, void *data)
 {
 #ifndef SSL_CONF_FLAG_FILE
     return "is not supported on this platform";
-#endif
-
+#else
     return NGX_CONF_OK;
+#endif
 }
 
 

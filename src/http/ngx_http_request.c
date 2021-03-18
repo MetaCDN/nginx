@@ -206,16 +206,17 @@ ngx_http_header_t  ngx_http_headers_in[] = {
 void
 ngx_http_init_connection(ngx_connection_t *c)
 {
-    ngx_uint_t              i;
-    ngx_event_t            *rev;
-    struct sockaddr_in     *sin;
-    ngx_http_port_t        *port;
-    ngx_http_in_addr_t     *addr;
-    ngx_http_log_ctx_t     *ctx;
-    ngx_http_connection_t  *hc;
+    ngx_uint_t                 i;
+    ngx_event_t               *rev;
+    struct sockaddr_in        *sin;
+    ngx_http_port_t           *port;
+    ngx_http_in_addr_t        *addr;
+    ngx_http_log_ctx_t        *ctx;
+    ngx_http_connection_t     *hc;
+    ngx_http_core_srv_conf_t  *cscf;
 #if (NGX_HAVE_INET6)
-    struct sockaddr_in6    *sin6;
-    ngx_http_in6_addr_t    *addr6;
+    struct sockaddr_in6       *sin6;
+    ngx_http_in6_addr_t       *addr6;
 #endif
 
     hc = ngx_pcalloc(c->pool, sizeof(ngx_http_connection_t));
@@ -361,7 +362,9 @@ ngx_http_init_connection(ngx_connection_t *c)
         return;
     }
 
-    ngx_add_timer(rev, c->listening->post_accept_timeout);
+    cscf = ngx_http_get_module_srv_conf(hc->conf_ctx, ngx_http_core_module);
+
+    ngx_add_timer(rev, cscf->client_header_timeout);
     ngx_reusable_connection(c, 1);
 
     if (ngx_handle_read_event(rev, 0) != NGX_OK) {
@@ -431,7 +434,7 @@ ngx_http_wait_request_handler(ngx_event_t *rev)
     if (n == NGX_AGAIN) {
 
         if (!rev->timer_set) {
-            ngx_add_timer(rev, c->listening->post_accept_timeout);
+            ngx_add_timer(rev, cscf->client_header_timeout);
             ngx_reusable_connection(c, 1);
         }
 
@@ -649,6 +652,7 @@ ngx_http_ssl_handshake(ngx_event_t *rev)
     ngx_http_connection_t     *hc;
     ngx_http_ssl_srv_conf_t   *sscf;
     ngx_http_core_loc_conf_t  *clcf;
+    ngx_http_core_srv_conf_t  *cscf;
 
     c = rev->data;
     hc = c->data;
@@ -680,7 +684,9 @@ ngx_http_ssl_handshake(ngx_event_t *rev)
             rev->ready = 0;
 
             if (!rev->timer_set) {
-                ngx_add_timer(rev, c->listening->post_accept_timeout);
+                cscf = ngx_http_get_module_srv_conf(hc->conf_ctx,
+                                                    ngx_http_core_module);
+                ngx_add_timer(rev, cscf->client_header_timeout);
                 ngx_reusable_connection(c, 1);
             }
 
@@ -755,7 +761,9 @@ ngx_http_ssl_handshake(ngx_event_t *rev)
             if (rc == NGX_AGAIN) {
 
                 if (!rev->timer_set) {
-                    ngx_add_timer(rev, c->listening->post_accept_timeout);
+                    cscf = ngx_http_get_module_srv_conf(hc->conf_ctx,
+                                                        ngx_http_core_module);
+                    ngx_add_timer(rev, cscf->client_header_timeout);
                 }
 
                 c->ssl->handler = ngx_http_ssl_handshake_handler;
@@ -1224,9 +1232,13 @@ ngx_http_process_request_uri(ngx_http_request_t *r)
         r->uri.len = r->uri_end - r->uri_start;
     }
 
-    if (r->complex_uri || r->quoted_uri) {
+    if (r->complex_uri || r->quoted_uri || r->empty_path_in_uri) {
 
-        r->uri.data = ngx_pnalloc(r->pool, r->uri.len + 1);
+        if (r->empty_path_in_uri) {
+            r->uri.len++;
+        }
+
+        r->uri.data = ngx_pnalloc(r->pool, r->uri.len);
         if (r->uri.data == NULL) {
             ngx_http_close_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
             return NGX_ERROR;
@@ -1250,7 +1262,7 @@ ngx_http_process_request_uri(ngx_http_request_t *r)
     r->unparsed_uri.len = r->uri_end - r->uri_start;
     r->unparsed_uri.data = r->uri_start;
 
-    r->valid_unparsed_uri = r->space_in_uri ? 0 : 1;
+    r->valid_unparsed_uri = (r->space_in_uri || r->empty_path_in_uri) ? 0 : 1;
 
     if (r->uri_ext) {
         if (r->args_start) {
@@ -3397,8 +3409,6 @@ ngx_http_set_lingering_close(ngx_connection_t *c)
             c->ssl->handler = ngx_http_set_lingering_close;
             return;
         }
-
-        c->recv = ngx_recv;
     }
 #endif
 
@@ -3427,6 +3437,9 @@ ngx_http_set_lingering_close(ngx_connection_t *c)
         return;
     }
 
+    c->close = 0;
+    ngx_reusable_connection(c, 1);
+
     ngx_add_timer(rev, clcf->lingering_timeout);
 
     if (rev->ready) {
@@ -3451,7 +3464,7 @@ ngx_http_lingering_close_handler(ngx_event_t *rev)
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0,
                    "http lingering close handler");
 
-    if (rev->timedout) {
+    if (rev->timedout || c->close) {
         ngx_http_close_request(r, 0);
         return;
     }
