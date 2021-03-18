@@ -7,6 +7,7 @@ wget https://github.com/MetaCDN/openssl/archive/MetaCDN_20210318.tar.gz
 tar -zxf MetaCDN_20210318.tar.gz
 cd openssl-MetaCDN_20210318
 ./Configure --prefix=/usr
+./config --prefix=/usr zlib-dynamic --openssldir=/etc/ssl shared
 make -j $(nproc)
 sudo make install
 cd ..
@@ -35,12 +36,15 @@ fi
 mkdir -p /usr/nginx
 mkdir -p /usr/nginx/nginx
 ./auto/configure --prefix=/etc/nginx \
-	--with-cc-opt="-I/usr/include" \
-	--with-ld-opt="-L/usr/lib" \
- --with-select_module \
+	    --with-cc-opt="-I/usr/include -I/usr/include/openssl" \
+            --with-ld-opt="-L/usr/lib" \
+            --with-openssl=/home/ubuntu/workspace/nginx/openssl-MetaCDN_20210318 \
+	    --with-openssl-opt='enable-tls1_3' \
+            --with-select_module \
             --with-poll_module \
             --with-threads \
             --with-file-aio \
+            --with-http_ssl_module \
             --with-http_v2_module \
             --with-http_realip_module \
             --with-http_addition_module \
@@ -69,10 +73,8 @@ mkdir -p /usr/nginx/nginx
             --http-scgi-temp-path=/var/cache/nginx/scgi_temp \
             --with-stream_realip_module \
             --with-stream_geoip_module=dynamic \
-        --with-compat \
-        --with-openssl=/usr/include/openssl \
-	--with-openssl-opt=enable-tls1_3 \
-        --with-http_stub_status_module
+            --with-compat \
+            --with-http_stub_status_module
 
 make -j $(nproc)
 sudo make install
